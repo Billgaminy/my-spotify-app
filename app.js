@@ -578,6 +578,8 @@ function updatePlayerUI() {
   }
 
   miniPlayer.classList.add('show');
+
+  updateMediaSession();
 }
 
 function updatePlayPauseIcons() {
@@ -643,6 +645,127 @@ audio.addEventListener('ended', () => {
     return;
   }
   playTrack(next);
+});
+
+/* ============================================================
+   MEDIA SESSION (οθόνη κλειδώματος / Control Center)
+   ============================================================ */
+const artworkCache = new Map();
+
+// Φτιάχνει τετράγωνο 512x512 εξώφυλλο (data URL) που διαβάζεται σίγουρα από το iOS
+function buildArtwork(track) {
+  if (artworkCache.has(track.id)) return Promise.resolve(artworkCache.get(track.id));
+  return new Promise((resolve) => {
+    if (!track.coverUrl) return resolve(null);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const size = 512;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        const sx = (img.naturalWidth - side) / 2;
+        const sy = (img.naturalHeight - side) / 2;
+        ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
+        const url = canvas.toDataURL('image/jpeg', 0.9);
+        artworkCache.set(track.id, url);
+        resolve(url);
+      } catch (err) {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = track.coverUrl;
+  });
+}
+
+async function updateMediaSession() {
+  if (!('mediaSession' in navigator) || typeof MediaMetadata === 'undefined') return;
+  const t = state.tracks[state.currentIndex];
+  if (!t) return;
+  const trackId = t.id;
+
+  const art = await buildArtwork(t);
+  // Αν στο μεταξύ άλλαξε τραγούδι, μην γράψεις παλιά στοιχεία
+  if (state.tracks[state.currentIndex]?.id !== trackId) return;
+
+  const fallback = new URL('apple-touch-icon.png', location.href).href;
+  navigator.mediaSession.metadata = new MediaMetadata({
+    title: t.title,
+    artist: t.artist,
+    album: 'My Spotify',
+    artwork: [{
+      src: art || fallback,
+      sizes: '512x512',
+      type: art ? 'image/jpeg' : 'image/png',
+    }],
+  });
+  updateMediaSessionPosition();
+}
+
+function updateMediaSessionPosition() {
+  if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+  if (!audio.duration || !isFinite(audio.duration)) return;
+  try {
+    navigator.mediaSession.setPositionState({
+      duration: audio.duration,
+      playbackRate: audio.playbackRate || 1,
+      position: Math.min(Math.max(audio.currentTime, 0), audio.duration),
+    });
+  } catch (_) {}
+}
+
+function setupMediaSessionHandlers() {
+  if (!('mediaSession' in navigator)) return;
+  const ms = navigator.mediaSession;
+  const set = (action, handler) => {
+    try { ms.setActionHandler(action, handler); } catch (_) {}
+  };
+
+  set('play', () => { audio.play().catch(() => {}); });
+  set('pause', () => { audio.pause(); });
+  set('previoustrack', () => playPrevious());
+  set('nexttrack', () => playNext());
+  // Αφαιρούμε τα "skip 10 δευτερολέπτων" ώστε να εμφανιστούν τα previous / next
+  set('seekbackward', null);
+  set('seekforward', null);
+  set('seekto', (details) => {
+    if (details.seekTime == null || !audio.duration) return;
+    audio.currentTime = details.seekTime;
+    updateMediaSessionPosition();
+  });
+}
+
+setupMediaSessionHandlers();
+
+audio.addEventListener('play', () => {
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+  updateMediaSessionPosition();
+});
+audio.addEventListener('pause', () => {
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+  updateMediaSessionPosition();
+});
+audio.addEventListener('loadedmetadata', updateMediaSessionPosition);
+audio.addEventListener('seeked', updateMediaSessionPosition);
+audio.addEventListener('ratechange', updateMediaSessionPosition);
+
+// Όταν η σελίδα/καρτέλα κλείνει εντελώς: σταμάτα τον ήχο και καθάρισε την οθόνη κλειδώματος
+window.addEventListener('pagehide', (e) => {
+  if (e.persisted) return;     // μπαίνει απλώς σε cache (bfcache), όχι πραγματικό κλείσιμο
+  try { audio.pause(); } catch (_) {}
+  if ('mediaSession' in navigator) {
+    const ms = navigator.mediaSession;
+    ms.playbackState = 'none';
+    ms.metadata = null;
+    ['play', 'pause', 'previoustrack', 'nexttrack', 'seekto', 'seekbackward', 'seekforward'].forEach(a => {
+      try { ms.setActionHandler(a, null); } catch (_) {}
+    });
+  }
+  audio.removeAttribute('src');
+  try { audio.load(); } catch (_) {}
 });
 
 /* ============================================================
