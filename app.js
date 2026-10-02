@@ -825,8 +825,10 @@ function setupMediaSessionHandlers() {
     try { ms.setActionHandler(action, handler); } catch (_) {}
   };
 
-  set('play', () => { resumePlayback(); });
-  set('pause', () => { audio.pause(); });
+  // Το play/pause της οθόνης κλειδώματος το χειρίζεται το iOS απευθείας στο audio,
+  // χωρίς να περνά από JavaScript (η σελίδα μπορεί να είναι "παγωμένη" στο παρασκήνιο).
+  set('play', null);
+  set('pause', null);
   set('previoustrack', () => playPrevious());
   set('nexttrack', () => playNext());
   // Αφαιρούμε τα "skip 10 δευτερολέπτων" ώστε να εμφανιστούν τα previous / next
@@ -845,15 +847,14 @@ function setupMediaSessionHandlers() {
 
 setupMediaSessionHandlers();
 
-audio.addEventListener('play', () => {
-  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-  setupMediaSessionHandlers();
-  updateMediaSessionPosition();
-});
-audio.addEventListener('pause', () => {
-  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
-  updateMediaSessionPosition();
-});
+// iOS 16.4+: δηλώνουμε ότι είναι αναπαραγωγή μουσικής (συνεχίζει με κλειδωμένη οθόνη / σε σίγαση)
+if (navigator.audioSession) {
+  try { navigator.audioSession.type = 'playback'; } catch (_) {}
+}
+
+// Το playbackState το διαχειρίζεται μόνο του το iOS από το audio element
+audio.addEventListener('play', updateMediaSessionPosition);
+audio.addEventListener('pause', updateMediaSessionPosition);
 audio.addEventListener('loadedmetadata', updateMediaSessionPosition);
 audio.addEventListener('seeked', updateMediaSessionPosition);
 audio.addEventListener('ratechange', updateMediaSessionPosition);
