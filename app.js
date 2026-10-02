@@ -581,10 +581,7 @@ function playTrack(index) {
 
   currentAudioUrl = URL.createObjectURL(t.audioBlob);
   audio.src = currentAudioUrl;
-  audio.play().catch(err => {
-    console.warn('Play error:', err);
-    dbg(`play() rejected: ${err.name} - ${err.message}`);
-  });
+  audio.play().catch(err => console.warn('Play error:', err));
 
   updatePlayerUI();
   renderLibrary();
@@ -595,7 +592,7 @@ function playTrack(index) {
 function togglePlay() {
   if (state.currentIndex === -1) return;
   if (audio.paused) {
-    resumePlayback();
+    audio.play().catch(err => console.warn('Play error:', err));
   } else {
     audio.pause();
   }
@@ -746,79 +743,8 @@ audio.addEventListener('ended', () => {
 });
 
 /* ============================================================
-   DEBUG LOG (Ρυθμίσεις → Διάγνωση ήχου)
-   ============================================================ */
-const DEBUG_KEY = 'myspotify_debug_log';
-let debugLines = [];
-try { debugLines = JSON.parse(localStorage.getItem(DEBUG_KEY) || '[]'); } catch (_) { debugLines = []; }
-
-function dbg(msg) {
-  const d = new Date();
-  const ts = d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
-  debugLines.push(`${ts} ${msg}`);
-  if (debugLines.length > 400) debugLines = debugLines.slice(-400);
-  try { localStorage.setItem(DEBUG_KEY, JSON.stringify(debugLines)); } catch (_) {}
-}
-
-function audioInfo() {
-  const sess = navigator.audioSession ? navigator.audioSession.state : 'n/a';
-  return `[paused=${audio.paused} t=${(audio.currentTime || 0).toFixed(1)} ready=${audio.readyState} net=${audio.networkState} err=${audio.error ? audio.error.code : 0} session=${sess} vis=${document.visibilityState}]`;
-}
-
-['play', 'playing', 'pause', 'waiting', 'stalled', 'error', 'ended', 'emptied', 'abort', 'loadstart'].forEach((ev) => {
-  audio.addEventListener(ev, () => dbg(`audio:${ev} ${audioInfo()}`));
-});
-
-document.addEventListener('visibilitychange', () => dbg(`visibility=${document.visibilityState} ${audioInfo()}`));
-window.addEventListener('pagehide', (e) => dbg(`pagehide persisted=${e.persisted}`));
-window.addEventListener('pageshow', (e) => dbg(`pageshow persisted=${e.persisted} ${audioInfo()}`));
-document.addEventListener('freeze', () => dbg('page freeze'));
-document.addEventListener('resume', () => dbg('page resume'));
-
-if (navigator.audioSession) {
-  navigator.audioSession.addEventListener('statechange', () => {
-    dbg(`audioSession state=${navigator.audioSession.state}`);
-  });
-}
-
-// Κάθε 5" καταγράφει κατάσταση: τα κενά στο log δείχνουν πότε "πάγωσε" η σελίδα
-setInterval(() => dbg(`tick ${audioInfo()}`), 5000);
-
-const BUILD_ID = 'stall-watchdog-v1';
-dbg(`--- εκκίνηση εφαρμογής --- build=${BUILD_ID} ${navigator.userAgent}`);
-
-const debugOverlay = document.getElementById('debug-overlay');
-const debugLogEl = document.getElementById('debug-log');
-
-document.getElementById('debug-show-btn').addEventListener('click', () => {
-  debugLogEl.textContent = debugLines.join('\n');
-  debugOverlay.classList.add('show');
-  debugLogEl.scrollTop = debugLogEl.scrollHeight;
-});
-document.getElementById('debug-close-btn').addEventListener('click', () => {
-  debugOverlay.classList.remove('show');
-});
-document.getElementById('debug-clear-btn').addEventListener('click', () => {
-  debugLines = [];
-  try { localStorage.removeItem(DEBUG_KEY); } catch (_) {}
-  showToast('Το log καθαρίστηκε');
-});
-document.getElementById('debug-copy-btn').addEventListener('click', async () => {
-  try {
-    await navigator.clipboard.writeText(debugLines.join('\n'));
-    showToast('Αντιγράφηκε');
-  } catch (_) {
-    showToast('Η αντιγραφή απέτυχε', true);
-  }
-});
-
-/* ============================================================
    MEDIA SESSION (οθόνη κλειδώματος / Control Center)
    ============================================================ */
-// true  = μπορείς να τραβάς τη μπάρα προόδου από την οθόνη κλειδώματος
-// false = χωρίς αυτό (αυξάνει τις πιθανότητες να εμφανιστούν τα κουμπιά previous / next αντί για ±10")
-const LOCKSCREEN_SEEK = false;
-
 const artworkCache = new Map();
 
 // Φτιάχνει τετράγωνο 512x512 εξώφυλλο (data URL) που διαβάζεται σίγουρα από το iOS
@@ -871,8 +797,6 @@ async function updateMediaSession() {
       type: art ? 'image/jpeg' : 'image/png',
     }],
   });
-  // Το iOS διαβάζει τα κουμπιά όταν υπάρχει ενεργή συνεδρία ήχου, οπότε τα δηλώνουμε ξανά εδώ
-  setupMediaSessionHandlers();
   updateMediaSessionPosition();
 }
 
@@ -895,139 +819,47 @@ function setupMediaSessionHandlers() {
     try { ms.setActionHandler(action, handler); } catch (_) {}
   };
 
-  // Το play/pause της οθόνης κλειδώματος το χειρίζεται το iOS απευθείας στο audio,
-  // χωρίς να περνά από JavaScript (η σελίδα μπορεί να είναι "παγωμένη" στο παρασκήνιο).
-  set('play', null);
-  set('pause', null);
-  set('previoustrack', () => { dbg(`action previoustrack ${audioInfo()}`); playPrevious(); });
-  set('nexttrack', () => { dbg(`action nexttrack ${audioInfo()}`); playNext(); });
-  // Αφαιρούμε τα "skip 10 δευτερολέπτων" ώστε να εμφανιστούν τα previous / next
+  set('play', () => { audio.play().catch(() => {}); });
+  set('pause', () => { audio.pause(); });
+  set('previoustrack', () => playPrevious());
+  set('nexttrack', () => playNext());
   set('seekbackward', null);
   set('seekforward', null);
-  if (LOCKSCREEN_SEEK) {
-    set('seekto', (details) => {
-      if (details.seekTime == null || !audio.duration) return;
-      audio.currentTime = details.seekTime;
-      updateMediaSessionPosition();
-    });
-  } else {
-    set('seekto', null);
-  }
+  set('seekto', (details) => {
+    if (details.seekTime == null || !audio.duration) return;
+    audio.currentTime = details.seekTime;
+    updateMediaSessionPosition();
+  });
 }
 
 setupMediaSessionHandlers();
 
-// iOS 16.4+: δηλώνουμε ότι είναι αναπαραγωγή μουσικής (συνεχίζει με κλειδωμένη οθόνη / σε σίγαση)
-if (navigator.audioSession) {
-  try { navigator.audioSession.type = 'playback'; } catch (_) {}
-}
-
-// Το playbackState το διαχειρίζεται μόνο του το iOS από το audio element
-audio.addEventListener('play', updateMediaSessionPosition);
-audio.addEventListener('pause', updateMediaSessionPosition);
+audio.addEventListener('play', () => {
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+  updateMediaSessionPosition();
+});
+audio.addEventListener('pause', () => {
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+  updateMediaSessionPosition();
+});
 audio.addEventListener('loadedmetadata', updateMediaSessionPosition);
 audio.addEventListener('seeked', updateMediaSessionPosition);
 audio.addEventListener('ratechange', updateMediaSessionPosition);
 
-/* ------------------------------------------------------------
-   Ανάκαμψη αναπαραγωγής: το iOS μπορεί να "πετάξει" την πηγή ήχου όσο η εφαρμογή
-   είναι σε pause στο παρασκήνιο. Τότε φορτώνουμε ξανά το τραγούδι στην ίδια θέση.
-   ------------------------------------------------------------ */
-let lastKnown = { id: null, time: 0 };
-
-audio.addEventListener('timeupdate', () => {
-  const t = state.tracks[state.currentIndex];
-  if (t && audio.currentTime > 0) lastKnown = { id: t.id, time: audio.currentTime };
-});
-
-function reloadCurrentSource(shouldPlay) {
-  const t = state.tracks[state.currentIndex];
-  if (!t || !t.audioBlob) return;
-
-  const pos = (lastKnown.id === t.id) ? lastKnown.time : 0;
-  if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
-  currentAudioUrl = URL.createObjectURL(t.audioBlob);
-  audio.src = currentAudioUrl;
-
-  audio.addEventListener('loadedmetadata', () => {
-    try { audio.currentTime = pos; } catch (_) {}
-    if (shouldPlay) audio.play().catch(err => console.warn('Play error:', err));
-    updatePlayPauseIcons();
-    updateMediaSessionPosition();
-  }, { once: true });
-
-  audio.load();
-}
-
-async function resumePlayback() {
-  if (state.currentIndex === -1) return;
-
-  // Αν η πηγή χάθηκε, φόρτωσέ την ξανά
-  if (!audio.currentSrc || audio.error) {
-    reloadCurrentSource(true);
-    return;
+// Όταν η σελίδα/καρτέλα κλείνει εντελώς: σταμάτα τον ήχο και καθάρισε την οθόνη κλειδώματος
+window.addEventListener('pagehide', (e) => {
+  if (e.persisted) return;     // μπαίνει απλώς σε cache (bfcache), όχι πραγματικό κλείσιμο
+  try { audio.pause(); } catch (_) {}
+  if ('mediaSession' in navigator) {
+    const ms = navigator.mediaSession;
+    ms.playbackState = 'none';
+    ms.metadata = null;
+    ['play', 'pause', 'previoustrack', 'nexttrack', 'seekto', 'seekbackward', 'seekforward'].forEach(a => {
+      try { ms.setActionHandler(a, null); } catch (_) {}
+    });
   }
-  try {
-    await audio.play();
-  } catch (err) {
-    console.warn('Play error, reloading source:', err);
-    reloadCurrentSource(true);
-  }
-}
-
-// Όταν επιστρέφεις στην εφαρμογή: συγχρόνισε τα κουμπιά και φτιάξε την πηγή αν χάθηκε
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState !== 'visible') return;
-  if (state.currentIndex === -1) return;
-  if (!audio.currentSrc || audio.error) reloadCurrentSource(false);
-  updatePlayPauseIcons();
-  updateMediaSessionPosition();
-});
-
-/* ------------------------------------------------------------
-   Watchdog: το iOS μερικές φορές δηλώνει "playing" αλλά ο ήχος δεν προχωράει
-   (π.χ. μετά από pause/play από την οθόνη κλειδώματος). Αν ο χρόνος δεν κινείται,
-   δοκιμάζουμε pause+play και, αν χρειαστεί, φόρτωμα της πηγής από την αρχή.
-   ------------------------------------------------------------ */
-let stallToken = 0;
-let stallRecovering = false;
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function stallWatchdog() {
-  const token = ++stallToken;
-  const trackId = state.tracks[state.currentIndex]?.id;
-  const stale = () => token !== stallToken || state.tracks[state.currentIndex]?.id !== trackId;
-  const moved = (t0) => audio.currentTime > t0 + 0.25;
-
-  let t0 = audio.currentTime;
-  await sleep(1000);
-  if (stale() || audio.paused || moved(t0)) return;
-
-  dbg(`STALL: ο ήχος δεν προχωράει → pause+play ${audioInfo()}`);
-  stallRecovering = true;
-  try {
-    audio.pause();
-    await audio.play();
-  } catch (err) {
-    dbg(`STALL: play() rejected: ${err.name} - ${err.message}`);
-  }
-  t0 = audio.currentTime;
-  await sleep(1200);
-  if (stale() || audio.paused || moved(t0)) {
-    dbg(`STALL: ${stale() ? 'ακυρώθηκε' : audio.paused ? 'σε pause' : 'ΛΥΘΗΚΕ με pause+play'} ${audioInfo()}`);
-    stallRecovering = false;
-    return;
-  }
-
-  dbg(`STALL: ακόμα κολλημένο → φόρτωμα πηγής ${audioInfo()}`);
-  reloadCurrentSource(true);
-  await sleep(2000);
-  dbg(`STALL: μετά το φόρτωμα ${audioInfo()} ${moved(t0) ? '→ ΛΥΘΗΚΕ' : '→ ΑΚΟΜΑ ΚΟΛΛΗΜΕΝΟ'}`);
-  stallRecovering = false;
-}
-
-audio.addEventListener('playing', () => {
-  if (!stallRecovering) stallWatchdog();
+  audio.removeAttribute('src');
+  try { audio.load(); } catch (_) {}
 });
 
 /* ============================================================
