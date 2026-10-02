@@ -581,7 +581,10 @@ function playTrack(index) {
 
   currentAudioUrl = URL.createObjectURL(t.audioBlob);
   audio.src = currentAudioUrl;
-  audio.play().catch(err => console.warn('Play error:', err));
+  audio.play().catch(err => {
+    console.warn('Play error:', err);
+    dbg(`play() rejected: ${err.name} - ${err.message}`);
+  });
 
   updatePlayerUI();
   renderLibrary();
@@ -743,6 +746,72 @@ audio.addEventListener('ended', () => {
 });
 
 /* ============================================================
+   DEBUG LOG (Ρυθμίσεις → Διάγνωση ήχου)
+   ============================================================ */
+const DEBUG_KEY = 'myspotify_debug_log';
+let debugLines = [];
+try { debugLines = JSON.parse(localStorage.getItem(DEBUG_KEY) || '[]'); } catch (_) { debugLines = []; }
+
+function dbg(msg) {
+  const d = new Date();
+  const ts = d.toTimeString().slice(0, 8) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+  debugLines.push(`${ts} ${msg}`);
+  if (debugLines.length > 400) debugLines = debugLines.slice(-400);
+  try { localStorage.setItem(DEBUG_KEY, JSON.stringify(debugLines)); } catch (_) {}
+}
+
+function audioInfo() {
+  const sess = navigator.audioSession ? navigator.audioSession.state : 'n/a';
+  return `[paused=${audio.paused} t=${(audio.currentTime || 0).toFixed(1)} ready=${audio.readyState} net=${audio.networkState} err=${audio.error ? audio.error.code : 0} session=${sess} vis=${document.visibilityState}]`;
+}
+
+['play', 'playing', 'pause', 'waiting', 'stalled', 'error', 'ended', 'emptied', 'abort', 'loadstart'].forEach((ev) => {
+  audio.addEventListener(ev, () => dbg(`audio:${ev} ${audioInfo()}`));
+});
+
+document.addEventListener('visibilitychange', () => dbg(`visibility=${document.visibilityState} ${audioInfo()}`));
+window.addEventListener('pagehide', (e) => dbg(`pagehide persisted=${e.persisted}`));
+window.addEventListener('pageshow', (e) => dbg(`pageshow persisted=${e.persisted} ${audioInfo()}`));
+document.addEventListener('freeze', () => dbg('page freeze'));
+document.addEventListener('resume', () => dbg('page resume'));
+
+if (navigator.audioSession) {
+  navigator.audioSession.addEventListener('statechange', () => {
+    dbg(`audioSession state=${navigator.audioSession.state}`);
+  });
+}
+
+// Κάθε 5" καταγράφει κατάσταση: τα κενά στο log δείχνουν πότε "πάγωσε" η σελίδα
+setInterval(() => dbg(`tick ${audioInfo()}`), 5000);
+
+dbg(`--- εκκίνηση εφαρμογής --- ${navigator.userAgent}`);
+
+const debugOverlay = document.getElementById('debug-overlay');
+const debugLogEl = document.getElementById('debug-log');
+
+document.getElementById('debug-show-btn').addEventListener('click', () => {
+  debugLogEl.textContent = debugLines.join('\n');
+  debugOverlay.classList.add('show');
+  debugLogEl.scrollTop = debugLogEl.scrollHeight;
+});
+document.getElementById('debug-close-btn').addEventListener('click', () => {
+  debugOverlay.classList.remove('show');
+});
+document.getElementById('debug-clear-btn').addEventListener('click', () => {
+  debugLines = [];
+  try { localStorage.removeItem(DEBUG_KEY); } catch (_) {}
+  showToast('Το log καθαρίστηκε');
+});
+document.getElementById('debug-copy-btn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(debugLines.join('\n'));
+    showToast('Αντιγράφηκε');
+  } catch (_) {
+    showToast('Η αντιγραφή απέτυχε', true);
+  }
+});
+
+/* ============================================================
    MEDIA SESSION (οθόνη κλειδώματος / Control Center)
    ============================================================ */
 // true  = μπορείς να τραβάς τη μπάρα προόδου από την οθόνη κλειδώματος
@@ -829,8 +898,8 @@ function setupMediaSessionHandlers() {
   // χωρίς να περνά από JavaScript (η σελίδα μπορεί να είναι "παγωμένη" στο παρασκήνιο).
   set('play', null);
   set('pause', null);
-  set('previoustrack', () => playPrevious());
-  set('nexttrack', () => playNext());
+  set('previoustrack', () => { dbg(`action previoustrack ${audioInfo()}`); playPrevious(); });
+  set('nexttrack', () => { dbg(`action nexttrack ${audioInfo()}`); playNext(); });
   // Αφαιρούμε τα "skip 10 δευτερολέπτων" ώστε να εμφανιστούν τα previous / next
   set('seekbackward', null);
   set('seekforward', null);
