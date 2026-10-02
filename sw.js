@@ -1,5 +1,5 @@
 /* Service Worker — My Spotify (λειτουργεί και χωρίς internet) */
-const CACHE_NAME = 'myspotify-v2';   // άλλαξε τον αριθμό όταν θέλεις να "σπάσεις" την παλιά cache
+const CACHE_NAME = 'myspotify-v3';   // άλλαξε τον αριθμό όταν θέλεις να "σπάσεις" την παλιά cache
 
 const ASSETS = [
   './',
@@ -46,7 +46,7 @@ function networkFirst(request, timeoutMs) {
       });
     }, timeoutMs);
 
-    fetch(request).then((response) => {
+    fetch(request, { cache: 'no-cache' }).then((response) => {
       clearTimeout(timer);
       if (response && response.status === 200) {
         const clone = response.clone();
