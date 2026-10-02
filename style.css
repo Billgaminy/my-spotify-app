@@ -1245,3 +1245,69 @@ body.reordering {
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   transition-duration: 150ms;
 }
+
+/* ============================================================
+   DEBUG LOG
+   ============================================================ */
+.debug-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.debug-btn {
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+}
+
+.debug-btn:active {
+  background: var(--bg-hover);
+}
+
+#debug-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: none;
+  flex-direction: column;
+  background: #0b0b0b;
+  color: #d8d8d8;
+  padding-top: env(safe-area-inset-top);
+}
+
+#debug-overlay.show {
+  display: flex;
+}
+
+.debug-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  font-weight: 700;
+  border-bottom: 1px solid #222;
+}
+
+.debug-header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+#debug-log {
+  flex: 1;
+  margin: 0;
+  padding: 10px 12px calc(20px + env(safe-area-inset-bottom));
+  overflow: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 10px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  -webkit-user-select: text;
+  user-select: text;
+}
