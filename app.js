@@ -983,6 +983,52 @@ document.addEventListener('visibilitychange', () => {
   updateMediaSessionPosition();
 });
 
+/* ------------------------------------------------------------
+   Watchdog: το iOS μερικές φορές δηλώνει "playing" αλλά ο ήχος δεν προχωράει
+   (π.χ. μετά από pause/play από την οθόνη κλειδώματος). Αν ο χρόνος δεν κινείται,
+   δοκιμάζουμε pause+play και, αν χρειαστεί, φόρτωμα της πηγής από την αρχή.
+   ------------------------------------------------------------ */
+let stallToken = 0;
+let stallRecovering = false;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function stallWatchdog() {
+  const token = ++stallToken;
+  const trackId = state.tracks[state.currentIndex]?.id;
+  const stale = () => token !== stallToken || state.tracks[state.currentIndex]?.id !== trackId;
+  const moved = (t0) => audio.currentTime > t0 + 0.25;
+
+  let t0 = audio.currentTime;
+  await sleep(1000);
+  if (stale() || audio.paused || moved(t0)) return;
+
+  dbg(`STALL: ο ήχος δεν προχωράει → pause+play ${audioInfo()}`);
+  stallRecovering = true;
+  try {
+    audio.pause();
+    await audio.play();
+  } catch (err) {
+    dbg(`STALL: play() rejected: ${err.name} - ${err.message}`);
+  }
+  t0 = audio.currentTime;
+  await sleep(1200);
+  if (stale() || audio.paused || moved(t0)) {
+    dbg(`STALL: ${stale() ? 'ακυρώθηκε' : audio.paused ? 'σε pause' : 'ΛΥΘΗΚΕ με pause+play'} ${audioInfo()}`);
+    stallRecovering = false;
+    return;
+  }
+
+  dbg(`STALL: ακόμα κολλημένο → φόρτωμα πηγής ${audioInfo()}`);
+  reloadCurrentSource(true);
+  await sleep(2000);
+  dbg(`STALL: μετά το φόρτωμα ${audioInfo()} ${moved(t0) ? '→ ΛΥΘΗΚΕ' : '→ ΑΚΟΜΑ ΚΟΛΛΗΜΕΝΟ'}`);
+  stallRecovering = false;
+}
+
+audio.addEventListener('playing', () => {
+  if (!stallRecovering) stallWatchdog();
+});
+
 /* ============================================================
    ANIMATION LOOP — Word-by-word lyrics με fill animation
    ============================================================ */
