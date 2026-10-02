@@ -784,7 +784,8 @@ if (navigator.audioSession) {
 // Κάθε 5" καταγράφει κατάσταση: τα κενά στο log δείχνουν πότε "πάγωσε" η σελίδα
 setInterval(() => dbg(`tick ${audioInfo()}`), 5000);
 
-dbg(`--- εκκίνηση εφαρμογής --- ${navigator.userAgent}`);
+const BUILD_ID = 'stall-watchdog-v1';
+dbg(`--- εκκίνηση εφαρμογής --- build=${BUILD_ID} ${navigator.userAgent}`);
 
 const debugOverlay = document.getElementById('debug-overlay');
 const debugLogEl = document.getElementById('debug-log');
