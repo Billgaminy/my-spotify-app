@@ -59,6 +59,16 @@ function dbPut(track) {
   });
 }
 
+function dbDelete(id) {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_TRACKS, 'readwrite');
+    const store = tx.objectStore(STORE_TRACKS);
+    const req = store.delete(id);
+    req.onsuccess = () => resolve();
+    req.onerror = (e) => reject(e.target.error);
+  });
+}
+
 function dbUpdateOrder(orderedTracks) {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_TRACKS, 'readwrite');
@@ -453,9 +463,18 @@ function renderLibrary() {
         <div class="track-item-title">${escapeHtml(t.title)}</div>
         <div class="track-item-artist">${escapeHtml(t.artist)}</div>
       </div>
+      <button class="delete-track" aria-label="Διαγραφή τραγουδιού" title="Διαγραφή">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
     `;
+    div.querySelector('.delete-track').addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteTrack(t.id, t.title);
+    });
     div.addEventListener('click', (e) => {
-      if (e.target.closest('.drag-handle')) return;
+      if (e.target.closest('.drag-handle') || e.target.closest('.delete-track')) return;
       if (i === state.currentIndex) {
         togglePlay();
       } else {
@@ -464,6 +483,82 @@ function renderLibrary() {
     });
     libraryList.appendChild(div);
   });
+}
+
+/* ============================================================
+   ΔΙΑΓΡΑΦΗ ΤΡΑΓΟΥΔΙΟΥ
+   ============================================================ */
+const HERO_PLACEHOLDER = heroCover.src;
+
+function resetPlayerAfterDelete() {
+  audio.pause();
+  if (currentAudioUrl) {
+    URL.revokeObjectURL(currentAudioUrl);
+    currentAudioUrl = null;
+  }
+  audio.removeAttribute('src');
+  try { audio.load(); } catch (_) {}
+
+  state.currentIndex = -1;
+  state.activeLineIndex = -1;
+  state.wordElementsMap = [];
+
+  closeFullPlayer();
+  miniPlayer.classList.remove('show');
+
+  heroTitle.textContent = '—';
+  heroArtist.textContent = 'Επίλεξε ένα τραγούδι';
+  heroCover.src = HERO_PLACEHOLDER;
+
+  miniProgressFill.style.width = '0%';
+  fullProgressFill.style.width = '0%';
+  miniTimeCurrent.textContent = '0:00';
+  miniTimeTotal.textContent = '0:00';
+  fullTimeCurrent.textContent = '0:00';
+  fullTimeTotal.textContent = '0:00';
+
+  resetLyrics();
+
+  if ('mediaSession' in navigator) {
+    navigator.mediaSession.playbackState = 'none';
+    navigator.mediaSession.metadata = null;
+  }
+  updatePlayPauseIcons();
+}
+
+async function deleteTrack(id, title) {
+  if (!confirm(`Να διαγραφεί το τραγούδι «${title}»;`)) return;
+
+  const idx = state.tracks.findIndex(t => t.id === id);
+  if (idx < 0) return;
+
+  try {
+    await dbDelete(id);
+  } catch (err) {
+    console.error('Delete error:', err);
+    showToast('Σφάλμα διαγραφής', true);
+    return;
+  }
+
+  const removed = state.tracks[idx];
+  const wasCurrent = idx === state.currentIndex;
+  const currentId = state.currentIndex >= 0 ? state.tracks[state.currentIndex]?.id : null;
+
+  state.tracks.splice(idx, 1);
+  state.shuffleOrder = [];
+  artworkCache.delete(id);
+
+  if (wasCurrent) {
+    resetPlayerAfterDelete();
+  } else if (currentId != null) {
+    state.currentIndex = state.tracks.findIndex(t => t.id === currentId);
+  }
+
+  if (removed.coverUrl) URL.revokeObjectURL(removed.coverUrl);
+
+  renderLibrary();
+  if (searchView.classList.contains('show')) renderSearchResults();
+  showToast('Το τραγούδι διαγράφηκε');
 }
 
 /* ============================================================
