@@ -592,7 +592,7 @@ function playTrack(index) {
 function togglePlay() {
   if (state.currentIndex === -1) return;
   if (audio.paused) {
-    audio.play().catch(err => console.warn('Play error:', err));
+    resumePlayback();
   } else {
     audio.pause();
   }
@@ -825,7 +825,7 @@ function setupMediaSessionHandlers() {
     try { ms.setActionHandler(action, handler); } catch (_) {}
   };
 
-  set('play', () => { audio.play().catch(() => {}); });
+  set('play', () => { resumePlayback(); });
   set('pause', () => { audio.pause(); });
   set('previoustrack', () => playPrevious());
   set('nexttrack', () => playNext());
@@ -858,20 +858,59 @@ audio.addEventListener('loadedmetadata', updateMediaSessionPosition);
 audio.addEventListener('seeked', updateMediaSessionPosition);
 audio.addEventListener('ratechange', updateMediaSessionPosition);
 
-// Όταν η σελίδα/καρτέλα κλείνει εντελώς: σταμάτα τον ήχο και καθάρισε την οθόνη κλειδώματος
-window.addEventListener('pagehide', (e) => {
-  if (e.persisted) return;     // μπαίνει απλώς σε cache (bfcache), όχι πραγματικό κλείσιμο
-  try { audio.pause(); } catch (_) {}
-  if ('mediaSession' in navigator) {
-    const ms = navigator.mediaSession;
-    ms.playbackState = 'none';
-    ms.metadata = null;
-    ['play', 'pause', 'previoustrack', 'nexttrack', 'seekto', 'seekbackward', 'seekforward'].forEach(a => {
-      try { ms.setActionHandler(a, null); } catch (_) {}
-    });
+/* ------------------------------------------------------------
+   Ανάκαμψη αναπαραγωγής: το iOS μπορεί να "πετάξει" την πηγή ήχου όσο η εφαρμογή
+   είναι σε pause στο παρασκήνιο. Τότε φορτώνουμε ξανά το τραγούδι στην ίδια θέση.
+   ------------------------------------------------------------ */
+let lastKnown = { id: null, time: 0 };
+
+audio.addEventListener('timeupdate', () => {
+  const t = state.tracks[state.currentIndex];
+  if (t && audio.currentTime > 0) lastKnown = { id: t.id, time: audio.currentTime };
+});
+
+function reloadCurrentSource(shouldPlay) {
+  const t = state.tracks[state.currentIndex];
+  if (!t || !t.audioBlob) return;
+
+  const pos = (lastKnown.id === t.id) ? lastKnown.time : 0;
+  if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+  currentAudioUrl = URL.createObjectURL(t.audioBlob);
+  audio.src = currentAudioUrl;
+
+  audio.addEventListener('loadedmetadata', () => {
+    try { audio.currentTime = pos; } catch (_) {}
+    if (shouldPlay) audio.play().catch(err => console.warn('Play error:', err));
+    updatePlayPauseIcons();
+    updateMediaSessionPosition();
+  }, { once: true });
+
+  audio.load();
+}
+
+async function resumePlayback() {
+  if (state.currentIndex === -1) return;
+
+  // Αν η πηγή χάθηκε, φόρτωσέ την ξανά
+  if (!audio.currentSrc || audio.error) {
+    reloadCurrentSource(true);
+    return;
   }
-  audio.removeAttribute('src');
-  try { audio.load(); } catch (_) {}
+  try {
+    await audio.play();
+  } catch (err) {
+    console.warn('Play error, reloading source:', err);
+    reloadCurrentSource(true);
+  }
+}
+
+// Όταν επιστρέφεις στην εφαρμογή: συγχρόνισε τα κουμπιά και φτιάξε την πηγή αν χάθηκε
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (state.currentIndex === -1) return;
+  if (!audio.currentSrc || audio.error) reloadCurrentSource(false);
+  updatePlayPauseIcons();
+  updateMediaSessionPosition();
 });
 
 /* ============================================================
