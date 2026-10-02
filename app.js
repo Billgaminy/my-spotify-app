@@ -745,6 +745,10 @@ audio.addEventListener('ended', () => {
 /* ============================================================
    MEDIA SESSION (οθόνη κλειδώματος / Control Center)
    ============================================================ */
+// true  = μπορείς να τραβάς τη μπάρα προόδου από την οθόνη κλειδώματος
+// false = χωρίς αυτό (αυξάνει τις πιθανότητες να εμφανιστούν τα κουμπιά previous / next αντί για ±10")
+const LOCKSCREEN_SEEK = false;
+
 const artworkCache = new Map();
 
 // Φτιάχνει τετράγωνο 512x512 εξώφυλλο (data URL) που διαβάζεται σίγουρα από το iOS
@@ -797,6 +801,8 @@ async function updateMediaSession() {
       type: art ? 'image/jpeg' : 'image/png',
     }],
   });
+  // Το iOS διαβάζει τα κουμπιά όταν υπάρχει ενεργή συνεδρία ήχου, οπότε τα δηλώνουμε ξανά εδώ
+  setupMediaSessionHandlers();
   updateMediaSessionPosition();
 }
 
@@ -826,17 +832,22 @@ function setupMediaSessionHandlers() {
   // Αφαιρούμε τα "skip 10 δευτερολέπτων" ώστε να εμφανιστούν τα previous / next
   set('seekbackward', null);
   set('seekforward', null);
-  set('seekto', (details) => {
-    if (details.seekTime == null || !audio.duration) return;
-    audio.currentTime = details.seekTime;
-    updateMediaSessionPosition();
-  });
+  if (LOCKSCREEN_SEEK) {
+    set('seekto', (details) => {
+      if (details.seekTime == null || !audio.duration) return;
+      audio.currentTime = details.seekTime;
+      updateMediaSessionPosition();
+    });
+  } else {
+    set('seekto', null);
+  }
 }
 
 setupMediaSessionHandlers();
 
 audio.addEventListener('play', () => {
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+  setupMediaSessionHandlers();
   updateMediaSessionPosition();
 });
 audio.addEventListener('pause', () => {
