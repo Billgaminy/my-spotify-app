@@ -1,5 +1,5 @@
 /* Service Worker — My Spotify (λειτουργεί και χωρίς internet) */
-const CACHE_NAME = 'myspotify-v3';   // άλλαξε τον αριθμό όταν θέλεις να "σπάσεις" την παλιά cache
+const CACHE_NAME = 'myspotify-v4';   // άλλαξε τον αριθμό όταν θέλεις να "σπάσεις" την παλιά cache
 
 const ASSETS = [
   './',
