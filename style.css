@@ -80,6 +80,21 @@ body.light-theme {
 
 html, body {
   overflow-x: hidden;
+  /* Μόνο scroll — καθόλου pinch zoom / double-tap zoom */
+  touch-action: pan-x pan-y;
+}
+
+/* Όταν είναι ανοιχτή η αναζήτηση, η σελίδα πίσω δεν κάνει scroll */
+body.search-open {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Και το header γίνεται αδιαφανές, ώστε να μη φαίνονται τα τραγούδια πίσω του */
+body.search-open #app-header {
+  background-color: var(--bg-primary);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 body {
@@ -314,9 +329,8 @@ body {
   height: 14px;
   display: flex;
   align-items: center;
-  cursor: pointer;
   position: relative;
-  touch-action: none;
+  pointer-events: none;     /* μόνο ένδειξη προόδου, χωρίς seek */
 }
 
 #mini-progress-track {
@@ -329,21 +343,12 @@ body {
   transition: height 0.15s ease;
 }
 
-#mini-progress-bar.dragging #mini-progress-track,
-#mini-progress-bar:active #mini-progress-track {
-  height: 6px;
-}
-
 #mini-player-progress-fill {
   height: 100%;
   background: #1DB954;
   width: 0%;
   border-radius: 2px;
   transition: width 0.1s linear;
-}
-
-#mini-progress-bar.dragging #mini-player-progress-fill {
-  transition: none;
 }
 
 /* ============================================================
@@ -599,7 +604,7 @@ body {
   opacity: 0.35;
   transform: scale(0.97);
   transform-origin: left center;
-  transition: opacity 0.4s ease, transform 0.4s ease;
+  transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
 .lyric-line.active-line {
@@ -612,7 +617,7 @@ body {
   margin-right: 0.35em;
   color: var(--text-muted);
   cursor: pointer;
-  transition: transform 0.2s ease;
+  touch-action: manipulation;
 }
 
 .lyric-word:active {
