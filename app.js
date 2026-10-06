@@ -872,18 +872,14 @@ let loopLastMap = null;
 function animationLoop() {
   // Αν ο Full Player είναι κλειστός δεν χρειάζεται να ενημερώνουμε στίχους (εξοικονόμηση μπαταρίας).
   // Όταν ανοίξει, ένα πέρασμα τα φέρνει όλα στη σωστή κατάσταση.
-  if (!fullPlayer.classList.contains('show')) {
-    requestAnimationFrame(animationLoop);
-    return;
-  }
+  if (fullPlayer.classList.contains('show')) lyricsStep(audio.currentTime);
+  requestAnimationFrame(animationLoop);
+}
 
-  const currentTime = audio.currentTime;
-
+// Ενημερώνει τους στίχους για συγκεκριμένο χρόνο (καλείται από το loop ΚΑΙ άμεσα όταν πατάς λέξη)
+function lyricsStep(currentTime) {
   // Σε pause, αν δεν άλλαξε τίποτα (χρόνος, στίχοι), δεν κάνουμε δουλειά
-  if (audio.paused && currentTime === loopLastTime && state.wordElementsMap === loopLastMap) {
-    requestAnimationFrame(animationLoop);
-    return;
-  }
+  if (audio.paused && currentTime === loopLastTime && state.wordElementsMap === loopLastMap) return;
   loopLastTime = currentTime;
   loopLastMap = state.wordElementsMap;
 
@@ -946,8 +942,6 @@ function animationLoop() {
       }
     }
   }
-
-  requestAnimationFrame(animationLoop);
 }
 
 /* ============================================================
@@ -1092,7 +1086,7 @@ fullBtnRepeat.addEventListener('click', () => {
 });
 
 /* ============================================================
-   PROGRESS BAR DRAG - MINI
+   PROGRESS BAR HELPERS
    ============================================================ */
 function getSeekPositionFromBar(barEl, clientX) {
   const rect = barEl.getBoundingClientRect();
@@ -1100,58 +1094,6 @@ function getSeekPositionFromBar(barEl, clientX) {
   pct = Math.max(0, Math.min(1, pct));
   return pct;
 }
-
-function startMiniDrag(clientX) {
-  if (!audio.duration || !isFinite(audio.duration)) return;
-  miniDragging = true;
-  wasPlayingBeforeDrag = !audio.paused;
-  if (wasPlayingBeforeDrag) audio.pause();
-  miniProgressBar.classList.add('dragging');
-  updateMiniDragVisual(clientX);
-}
-
-function updateMiniDragVisual(clientX) {
-  const pct = getSeekPositionFromBar(miniProgressBar, clientX);
-  miniProgressFill.style.width = (pct * 100) + '%';
-  miniTimeCurrent.textContent = formatTime(pct * audio.duration);
-}
-
-function endMiniDrag(clientX) {
-  if (!miniDragging) return;
-  const pct = getSeekPositionFromBar(miniProgressBar, clientX);
-  audio.currentTime = pct * audio.duration;
-  miniDragging = false;
-  miniProgressBar.classList.remove('dragging');
-  state.wordCursor = 0;
-  state.wordElementsMap.forEach(it => { it.state = undefined; });
-  if (wasPlayingBeforeDrag) audio.play().catch(() => {});
-}
-
-miniProgressBar.addEventListener('mousedown', (e) => {
-  e.stopPropagation();
-  startMiniDrag(e.clientX);
-});
-document.addEventListener('mousemove', (e) => {
-  if (miniDragging) { e.preventDefault(); updateMiniDragVisual(e.clientX); }
-});
-document.addEventListener('mouseup', (e) => {
-  if (miniDragging) endMiniDrag(e.clientX);
-});
-
-miniProgressBar.addEventListener('touchstart', (e) => {
-  e.stopPropagation();
-  startMiniDrag(e.touches[0].clientX);
-}, { passive: true });
-miniProgressBar.addEventListener('touchmove', (e) => {
-  if (!miniDragging) return;
-  e.stopPropagation();
-  updateMiniDragVisual(e.touches[0].clientX);
-}, { passive: true });
-miniProgressBar.addEventListener('touchend', (e) => {
-  if (!miniDragging) return;
-  e.stopPropagation();
-  endMiniDrag(e.changedTouches[0].clientX);
-}, { passive: true });
 
 /* ============================================================
    PROGRESS BAR DRAG - FULL
@@ -1251,28 +1193,8 @@ function renderLyrics(track) {
       span.dataset.wordIndex = wIndex;
       span.style.color = 'var(--text-muted)';
 
-      span.addEventListener('click', () => {
-        audio.currentTime = wData.start;
-        if (audio.paused) audio.play();
-
-        document.querySelectorAll('.lyric-line.active-line').forEach(el => {
-          el.classList.remove('active-line');
-        });
-        lineDiv.classList.add('active-line');
-
-        markAllWordsBeforeAsCompleted(lIndex, wIndex);
-
-        const idx = state.wordElementsMap.findIndex(
-          it => it.lineIndex === lIndex && it.wordIndex === wIndex
-        );
-        state.wordCursor = idx >= 0 ? idx : 0;
-        state.activeLineIndex = lIndex;
-        lastScrollLine = lIndex;
-
-        setTimeout(() => {
-          scrollFullLyricsToLine(lIndex);
-        }, 50);
-      });
+      // Το πάτημα το χειρίζεται ένας κοινός listener στο container (πιο γρήγορο από ένα listener ανά λέξη)
+      span.dataset.mapIndex = state.wordElementsMap.length;
 
       lineDiv.appendChild(span);
       state.wordElementsMap.push({
@@ -1299,6 +1221,26 @@ function scrollFullLyricsToLine(lineIndex, smooth = true) {
   const targetScroll = Math.max(0, elTop - (containerHeight * 0.3) + (elHeight / 2));
   fullLyricsContainer.scrollTo({ top: targetScroll, behavior: smooth ? 'smooth' : 'instant' });
 }
+
+// Πάτημα σε λέξη: άμεση μετάβαση + άμεση ενημέρωση των στίχων (χωρίς να περιμένει το επόμενο frame)
+function seekToWord(item) {
+  // Μικρό περιθώριο ώστε το audio να μην προσγειωθεί λίγα ms ΠΡΙΝ την αρχή της λέξης
+  const target = item.start + 0.02;
+  audio.currentTime = target;
+  if (audio.paused) audio.play().catch(() => {});
+
+  state.activeLineIndex = -1;
+  lastScrollLine = -1;
+  loopLastTime = -1;
+  lyricsStep(target);
+}
+
+fullLyricsContainer.addEventListener('click', (e) => {
+  const span = e.target.closest('.lyric-word');
+  if (!span) return;
+  const item = state.wordElementsMap[Number(span.dataset.mapIndex)];
+  if (item) seekToWord(item);
+});
 
 function setWordCompleted(element) {
   element.style.background = 'none';
@@ -1623,6 +1565,7 @@ function openSearchView() {
   // Ακριβώς κάτω από το header
   searchView.style.top = appHeader.getBoundingClientRect().bottom + 'px';
   searchView.classList.add('show');
+  document.body.classList.add('search-open');   // κλειδώνει το scroll της σελίδας πίσω
   navSearch.classList.add('active');
   navLibrary.classList.remove('active');
   renderSearchResults();
@@ -1632,6 +1575,7 @@ function openSearchView() {
 function closeSearchView() {
   searchInput.blur();
   searchView.classList.remove('show');
+  document.body.classList.remove('search-open');
   navLibrary.classList.add('active');
   navSearch.classList.remove('active');
 }
@@ -1713,6 +1657,28 @@ fullLyricsFullscreenBtn.addEventListener('click', (e) => {
 /* ============================================================
    INIT
    ============================================================ */
+/* ============================================================
+   ΑΠΕΝΕΡΓΟΠΟΙΗΣΗ ZOOM + ΚΛΕΙΔΩΜΑ SCROLL ΣΤΗΝ ΑΝΑΖΗΤΗΣΗ
+   ============================================================ */
+// Pinch zoom στο Safari/iOS
+['gesturestart', 'gesturechange', 'gestureend'].forEach(ev => {
+  document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+});
+
+document.addEventListener('touchmove', (e) => {
+  // Πολλά δάχτυλα = pinch
+  if (e.touches.length > 1) { e.preventDefault(); return; }
+
+  // Με ανοιχτή αναζήτηση, μόνο τα αποτελέσματα (αν έχουν scroll), ο full player και οι ρυθμίσεις κάνουν scroll
+  if (document.body.classList.contains('search-open')) {
+    const t = e.target;
+    const free = t.closest && t.closest('#full-player, #settings-panel');
+    const sr = t.closest && t.closest('#search-results');
+    const resultsScrollable = sr && sr.scrollHeight > sr.clientHeight;
+    if (!free && !resultsScrollable) e.preventDefault();
+  }
+}, { passive: false });
+
 (async function init() {
   const savedTheme = localStorage.getItem(LS_THEME);
   applyTheme(savedTheme === 'light' ? 'light' : 'dark');
