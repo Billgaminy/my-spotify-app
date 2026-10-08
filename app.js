@@ -69,28 +69,26 @@ function dbDelete(id) {
   });
 }
 
-function dbUpdateOrder(orderedTracks) {
+// Η σειρά αποθηκεύεται ΞΕΧΩΡΙΣΤΑ (localStorage). Δεν ξαναγράφουμε τα τραγούδια (mp3 blobs) στο IndexedDB,
+// γιατί στο Safari/iOS αυτό μπορεί να χαλάσει τα blobs που έχουμε ήδη φορτωμένα και το επόμενο τραγούδι κολλάει.
+const LS_ORDER = 'myspotify_order';
+
+function saveOrder(orderedTracks) {
+  try { localStorage.setItem(LS_ORDER, JSON.stringify(orderedTracks.map(t => t.id))); } catch (_) {}
+}
+
+function loadSavedOrder() {
+  try {
+    const arr = JSON.parse(localStorage.getItem(LS_ORDER) || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch (_) { return []; }
+}
+
+function dbGet(id) {
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE_TRACKS, 'readwrite');
-    const store = tx.objectStore(STORE_TRACKS);
-    let pending = orderedTracks.length;
-    if (pending === 0) return resolve();
-
-    orderedTracks.forEach((t, idx) => {
-      const getReq = store.get(t.id);
-      getReq.onsuccess = () => {
-        const row = getReq.result;
-        if (row) {
-          row.order = idx;
-          store.put(row);
-        }
-        pending--;
-        if (pending === 0) resolve();
-      };
-      getReq.onerror = (e) => reject(e.target.error);
-    });
-
-    tx.onerror = (e) => reject(e.target.error);
+    const req = db.transaction(STORE_TRACKS, 'readonly').objectStore(STORE_TRACKS).get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = (e) => reject(e.target.error);
   });
 }
 
@@ -376,7 +374,12 @@ function extractWordLyrics(htmlText) {
 async function loadFromDB() {
   try {
     const rows = await dbGetAll();
+    const saved = loadSavedOrder();
+    const pos = new Map(saved.map((id, i) => [id, i]));
     rows.sort((a, b) => {
+      const pa = pos.has(a.id), pb = pos.has(b.id);
+      if (pa && pb) return pos.get(a.id) - pos.get(b.id);
+      if (pa !== pb) return pa ? -1 : 1;           // τα νέα (χωρίς αποθηκευμένη θέση) πάνε στο τέλος
       const oa = a.order != null ? a.order : (a.addedAt || 0);
       const ob = b.order != null ? b.order : (b.addedAt || 0);
       return oa - ob;
@@ -579,6 +582,7 @@ function playTrack(index) {
     currentAudioUrl = null;
   }
 
+  audioRetryFor = null;
   currentAudioUrl = URL.createObjectURL(t.audioBlob);
   audio.src = currentAudioUrl;
   audio.play().catch(err => console.warn('Play error:', err));
@@ -726,6 +730,22 @@ audio.addEventListener('timeupdate', () => {
     fullProgressFill.style.width = pctFull + '%';
     fullTimeCurrent.textContent = formatTime(audio.currentTime);
   }
+});
+
+let audioRetryFor = null;
+audio.addEventListener('error', async () => {
+  const t = state.tracks[state.currentIndex];
+  if (!t || audioRetryFor === t.id) return;
+  audioRetryFor = t.id;
+  try {
+    const row = await dbGet(t.id);
+    if (!row || !row.audioBlob) return;
+    t.audioBlob = row.audioBlob;
+    if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
+    currentAudioUrl = URL.createObjectURL(t.audioBlob);
+    audio.src = currentAudioUrl;
+    audio.play().catch(() => {});
+  } catch (err) { console.warn('Audio retry failed:', err); }
 });
 
 audio.addEventListener('ended', () => {
@@ -1431,13 +1451,8 @@ async function commitNewOrder(movedId, nextId, prevId) {
 
   renderLibrary();   // ανανέωση ώστε οι δείκτες των κλικ να είναι σωστοί
 
-  try {
-    await dbUpdateOrder(arr);
-    showToast('Η σειρά αποθηκεύτηκε');
-  } catch (err) {
-    console.error('Order save error:', err);
-    showToast('Σφάλμα αποθήκευσης σειράς', true);
-  }
+  saveOrder(arr);
+  showToast('Η σειρά αποθηκεύτηκε');
 }
 
 /* ============================================================
