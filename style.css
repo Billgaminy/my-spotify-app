@@ -837,13 +837,14 @@ body {
   justify-content: center;
   flex-shrink: 0;
   color: var(--text-muted);
-  touch-action: none;           /* το σύρσιμο στη λαβή δεν κάνει scroll τη σελίδα */
+  touch-action: pan-y;          /* πριν το κράτημα 2" το σύρσιμο κάνει κανονικό scroll· μετά το μπλοκάρει το JS */
   cursor: grab;
   -webkit-touch-callout: none;
 }
 
-.drag-handle:active {
-  color: var(--text-primary);
+.drag-handle:active,
+.drag-handle.holding {
+  color: #1DB954;
 }
 
 .track-item.dragging {
