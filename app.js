@@ -1311,39 +1311,81 @@ libraryList.addEventListener('contextmenu', (e) => {
   if (e.target.closest('.drag-handle')) e.preventDefault();
 });
 
-libraryList.addEventListener('pointerdown', (e) => {
-  const handle = e.target.closest('.drag-handle');
-  if (!handle || reorder) return;
-  const item = handle.closest('.track-item');
-  if (!item) return;
+// Πρέπει να κρατήσεις πατημένες τις τελίτσες για ~2 δευτερόλεπτα πριν ξεκινήσει η μετακίνηση.
+// Αν σύρεις νωρίτερα, γίνεται κανονικό scroll της λίστας.
+const REORDER_HOLD_MS = 2000;
+const HOLD_MOVE_TOLERANCE = 10;   // px κίνησης που ακυρώνουν το κράτημα (= θέλεις scroll)
+let hold = null;
 
-  e.preventDefault();
-  try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+function cancelHold() {
+  if (!hold) return;
+  clearTimeout(hold.timer);
+  hold.handle.classList.remove('holding');
+  hold = null;
+}
+
+function beginReorder(h) {
+  const { item, handle, pointerId } = h;
+  hold = null;
+  handle.classList.remove('holding');
+  if (!libraryList.contains(item)) return;
+
+  try { handle.setPointerCapture(pointerId); } catch (_) {}
+  try { if (navigator.vibrate) navigator.vibrate(25); } catch (_) {}
 
   const rect = item.getBoundingClientRect();
   reorder = {
     item,
     handle,
-    pointerId: e.pointerId,
-    grabOffsetY: e.clientY - rect.top,
-    lastY: e.clientY,
+    pointerId,
+    grabOffsetY: h.lastY - rect.top,
+    lastY: h.lastY,
     startOrder: [...libraryList.children].map(el => el.dataset.id).join('|'),
     raf: 0,
   };
   item.classList.add('dragging');
   document.body.classList.add('reordering');
   reorder.raf = requestAnimationFrame(reorderTick);
+}
+
+libraryList.addEventListener('pointerdown', (e) => {
+  const handle = e.target.closest('.drag-handle');
+  if (!handle || reorder || hold) return;
+  const item = handle.closest('.track-item');
+  if (!item) return;
+
+  hold = {
+    item, handle,
+    pointerId: e.pointerId,
+    startX: e.clientX,
+    startY: e.clientY,
+    lastY: e.clientY,
+    timer: 0,
+  };
+  handle.classList.add('holding');
+  const h = hold;
+  h.timer = setTimeout(() => { if (hold === h) beginReorder(h); }, REORDER_HOLD_MS);
 });
 
 libraryList.addEventListener('pointermove', (e) => {
+  if (hold && e.pointerId === hold.pointerId) {
+    hold.lastY = e.clientY;
+    if (Math.abs(e.clientX - hold.startX) > HOLD_MOVE_TOLERANCE ||
+        Math.abs(e.clientY - hold.startY) > HOLD_MOVE_TOLERANCE) {
+      cancelHold();          // κουνήθηκε πριν περάσουν τα 2" → είναι scroll
+    }
+    return;
+  }
   if (!reorder || e.pointerId !== reorder.pointerId) return;
   reorder.lastY = e.clientY;
 });
 
 libraryList.addEventListener('pointerup', (e) => {
+  if (hold && e.pointerId === hold.pointerId) cancelHold();
   if (reorder && e.pointerId === reorder.pointerId) finishReorder();
 });
 libraryList.addEventListener('pointercancel', (e) => {
+  if (hold && e.pointerId === hold.pointerId) cancelHold();
   if (reorder && e.pointerId === reorder.pointerId) finishReorder();
 });
 
@@ -1576,9 +1618,14 @@ function syncArtistFilterBtn() {
     : 'Αναζήτηση τραγουδιού ή καλλιτέχνη...';
 }
 
+let libraryScrollY = 0;
+
 function openSearchView() {
-  // Ακριβώς κάτω από το header
-  searchView.style.top = appHeader.getBoundingClientRect().bottom + 'px';
+  // Θυμήσου πού ήταν η λίστα και γύρνα στην κορυφή, ώστε το header να είναι ορατό
+  libraryScrollY = window.scrollY || 0;
+  window.scrollTo(0, 0);
+  // Ακριβώς κάτω από το header (offsetHeight: δεν εξαρτάται από το scroll)
+  searchView.style.top = appHeader.offsetHeight + 'px';
   searchView.classList.add('show');
   document.body.classList.add('search-open');   // κλειδώνει το scroll της σελίδας πίσω
   navSearch.classList.add('active');
@@ -1588,9 +1635,11 @@ function openSearchView() {
 }
 
 function closeSearchView() {
+  const wasOpen = searchView.classList.contains('show');
   searchInput.blur();
   searchView.classList.remove('show');
   document.body.classList.remove('search-open');
+  if (wasOpen) window.scrollTo(0, libraryScrollY);   // επιστροφή στο σημείο της λίστας
   navLibrary.classList.add('active');
   navSearch.classList.remove('active');
 }
@@ -1681,6 +1730,8 @@ fullLyricsFullscreenBtn.addEventListener('click', (e) => {
 });
 
 document.addEventListener('touchmove', (e) => {
+  // Μετακίνηση τραγουδιού σε εξέλιξη: καθόλου scroll
+  if (reorder) { e.preventDefault(); return; }
   // Πολλά δάχτυλα = pinch
   if (e.touches.length > 1) { e.preventDefault(); return; }
 
